@@ -1,20 +1,43 @@
 {-# OPTIONS_HADDOCK show-extensions #-}
--- |   This module provides two functions, @'churchEncode'@ and @'churchDecode'@. These form
+-- |   @'churchEncode'@ and @'churchDecode'@ form
 --   an isomorphism between a type and its church representation of a type
---  To use this, simply define an empty instance of @'Church'@ (or use @DeriveAnyClass@)
+--  Simply define an empty instance of @'Church'@ (or using @DeriveAnyClass@)
 --  for a type with a 'Generic' instance and defaulting magic will take care of the rest.
 --  For example:
 --
 -- >  {-# LANGUAGE DeriveGeneric #-}
 -- >  {-# LANGUAGE DeriveAnyClass #-}
--- >  data MyType = Foo Int Bool | Bar | Baz Char
--- >              deriving(Generic, Church, Show)
+-- >  data MyType = Foo Int Bool | Bar | Baz Char deriving (Generic, Church, Show)
 --
 -- >>>  churchEncode (Foo 1 True) (\int bool -> int + 1) 0 (const 1)
 -- 2
 --
 -- >>> churchDecode (\foo bar baz -> bar) :: MyType
 -- Bar
+--
+-- Recursive datastructures only unfold one level:
+--
+-- > data Nat = Z | S Nat deriving (Generic,Church,Show)
+--
+-- >>> :t churchEncode N
+-- r -> (Nat -> r) -> r
+--
+-- But we can still write recursive folds over such data:
+--
+-- > nat2int :: Nat -> Int
+-- > nat2int a = churchEncode a 0 ((+1) . nat2int)
+--
+-- >>> nat2int (S (S (S Z)))
+-- 3
+--
+-- Decoding recursive data is more cumbersome due to the 'Rep' wrappings,
+-- but fortunately should not need to be done by hand often.
+--
+-- decodeNat :: (Rep Nat () -> (Rep Nat () -> Rep Nat ()) -> Rep Nat ()) -> Nat
+-- decodeNat k = churchDecode (\z s -> k z (s . to))
+--
+-- >>> decodeNat (\z s -> s . s . s . s $ z)
+-- S (S (S (S Z)))
 
 module Church (ChurchRep, Church(churchEncode, churchDecode), churchCast) where
 
@@ -29,22 +52,22 @@ import GHC.Generics
 --
 --      1. For each constructor, write out its type signature
 --
---      2. Replace the @Foo@ at the end of each signature with @c@
+--      2. Replace the @Foo@ at the end of each signature with @r@
 --
---      3. Join these type signatures together with arrows @(a -> b -> c) -> c -> ...@
+--      3. Join these type signatures together with arrows @(a -> b -> r) -> r -> ...@
 --
---      4. Append a final @ -> c@ to the end of this
+--      4. Append a final @ -> r@ to the end of this
 --
 -- For example, for 'Maybe'
 --
 --   1. @'Nothing' :: Maybe a@ and @'Just' :: a -> Maybe a@.
 --
---   2. We then have @c@ and @a -> c@.
+--   2. We then have @r@ and @a -> r@.
 --
---   3. Joining these gives @c -> (a -> c)@
+--   3. Joining these gives @r -> (a -> r)@
 --
---   4. @c -> (a -> c) -> c@ is our church representation
-type ChurchRep t c = ChurchSum (ToList (StripMeta (Rep t ())) (ListTerm ())) c
+--   4. @r -> (a -> r) -> r@ is our church representation
+type ChurchRep t r = ChurchSum (ToList (StripMeta (Rep t ())) (ListTerm ())) r
 
 class Church a where
   -- | Reify a type to its church representation
